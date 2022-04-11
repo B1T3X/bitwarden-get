@@ -1,0 +1,71 @@
+function bwg_usage() {
+    echo "Usage: bwg -s <item to search> [-upq]"
+    echo "-s        Search term"
+    echo "-u        Output username"
+    echo "-p        Output password"
+    echo "-q        Quiet output, no definitions"
+}
+
+output=""
+# If nothing is supplied, show usage message
+if [ "$#" == 0 ]; then
+     bwg_usage >&2
+    exit 1
+fi
+while getopts "s:qpu" OPTION; do
+    case $OPTION in
+
+        s)
+            # If search term supplied, get relevant matches from bw
+            searchterm=$OPTARG
+            echo Searching for $searchterm...
+            items=$(bw list items --search "$searchterm")
+            if [[ $items == '[]' ]]; then
+                echo -e No items have been found for \"$searchterm\" >&2
+                exit 1
+            fi
+            # Count amount of items returned
+            item_range=$[$(echo $items | jq '. | length')-1]
+            # If only 1 item is present, no need to create a dict and use fzf
+            if [[ $item_range == '0' ]]; then
+                chosen_item_id=$(jq .[0].id <<< $items | tr -d '"')
+            else
+                # Create dictionary and populate it with names and ids
+                declare -A bw_ele_dict
+                for i in $(seq 0 $item_range); do
+                    current_item=$(jq ".[$i]" <<< $items)
+                    current_item_name=$(jq '.id' <<< $current_item | sed s/\"//g)
+                    current_item_id=$(jq '.name' <<< $current_item | sed s/\"//g)
+                    bw_ele_dict[$current_item_id]=$current_item_name
+                done
+                # Prompt user to choose
+                chosen_item=$(printf "%s\n" "${!bw_ele_dict[@]}" | fzf ) # | sed s/\"//g | fzf)
+                # If an item wasn't selected, exit
+                if [ -z $chosen_item ]; then
+                    exit 1
+                fi
+            chosen_item_id=${bw_ele_dict[$chosen_item]}
+            fi
+
+            returned_item=$(bw get item $chosen_item_id)
+            ;;
+        u)
+            output="Username: $(jq '.login.username' <<< $returned_item | tr -d '"')\n$output"
+            ;;
+        p)
+            output+="Password: $(jq '.login.password' <<< $returned_item | tr -d '"')\n"
+            ;;
+        q)
+            output=$(sed 's/Username: //g;s/Password: //g' <<< $output)
+            ;;
+        [?])
+            echo Unknown option supplied >&2
+            ;;
+        *)
+            bwg_usage
+            ;;
+    esac
+done
+: ${searchterm:?-s not supplied}
+echo -e $output >&1
+
